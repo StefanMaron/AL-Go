@@ -125,6 +125,10 @@ try {
         }
     }
     
+    Write-Host "###############################################"
+    Write-Host $installTestApps
+    Write-Host "###############################################"
+    
     # Analyze app.json version dependencies before launching pipeline
 
     # Analyze InstallApps and InstallTestApps before launching pipeline
