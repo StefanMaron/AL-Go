@@ -564,13 +564,20 @@ function Get-ProjectsToBuild {
                     }
                     $windowsBuildDimensions = @($buildDimensions | Where-Object { -not $_.linuxFastLane })
                     $linuxBuildDimensions = @($buildDimensions | Where-Object { $_.linuxFastLane })
+                    # Captured into variables first, not called inline as the hashtable values below: ConvertTo-Json
+                    # on Windows PowerShell 5.1 mis-serializes ProtectEmptyBuildDimensions' -NoEnumerate array output
+                    # as {"value":[...],"Count":N} (a JSON object, not an array) when it's assigned directly as a
+                    # hashtable-literal value instead of via a preceding `$var = ...` statement - which then breaks
+                    # the Build/BuildLinux jobs' strategy.matrix.include (see RELEASENOTES.md).
+                    $protectedWindowsBuildDimensions = ProtectEmptyBuildDimensions -dimensions $windowsBuildDimensions
+                    $protectedLinuxBuildDimensions = ProtectEmptyBuildDimensions -dimensions $linuxBuildDimensions
                     $projectsOrderToBuild += @{
                         projects = $projectsOnDepth
                         projectsCount = $projectsOnDepth.Count
-                        buildDimensions = ProtectEmptyBuildDimensions -dimensions $windowsBuildDimensions
+                        buildDimensions = $protectedWindowsBuildDimensions
                         # GitHub Actions expressions have no length()/array-count function, so the count is precomputed here for the if: conditions gating the Build/BuildLinux jobs
                         buildDimensionsCount = $windowsBuildDimensions.Count
-                        buildDimensionsLinux = ProtectEmptyBuildDimensions -dimensions $linuxBuildDimensions
+                        buildDimensionsLinux = $protectedLinuxBuildDimensions
                         buildDimensionsLinuxCount = $linuxBuildDimensions.Count
                     }
                 }
@@ -579,12 +586,14 @@ function Get-ProjectsToBuild {
 
         if ($projectsOrderToBuild.Count -eq 0) {
             Write-Host "Did not find any projects to add to the build order, adding default values"
+            $protectedEmptyBuildDimensions = ProtectEmptyBuildDimensions -dimensions @()
+            $protectedEmptyLinuxBuildDimensions = ProtectEmptyBuildDimensions -dimensions @()
             $projectsOrderToBuild += @{
                 projects = @()
                 projectsCount = 0
-                buildDimensions = ProtectEmptyBuildDimensions -dimensions @()
+                buildDimensions = $protectedEmptyBuildDimensions
                 buildDimensionsCount = 0
-                buildDimensionsLinux = ProtectEmptyBuildDimensions -dimensions @()
+                buildDimensionsLinux = $protectedEmptyLinuxBuildDimensions
                 buildDimensionsLinuxCount = 0
             }
         }
