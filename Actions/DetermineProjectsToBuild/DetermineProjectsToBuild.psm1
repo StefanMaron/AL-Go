@@ -213,12 +213,16 @@ function ProtectEmptyBuildDimensions {
             githubRunnerShell = 'powershell'
         })
     }
-    # -NoEnumerate is required: a plain `return $dimensions` (or wrapping it again in @() at the
-    # call site) unrolls a single-element array back down to its bare element when PowerShell
-    # captures the function's output - a Hashtable element then reports .Count as its key count,
-    # not 1, and a real (already multi/single-element) array gets nested inside an extra array
-    # instead. -NoEnumerate is what preserves the array itself as the one output object.
-    Write-Output -NoEnumerate $dimensions
+    # A plain `return $dimensions` (or wrapping it again in @() at the call site) unrolls a
+    # single-element array back down to its bare element when PowerShell captures the function's
+    # output - a Hashtable element then reports .Count as its key count, not 1. `return @(, $x)`
+    # (the same idiom CreateBuildDimensions above uses) preserves the array itself as the one
+    # output object instead. `Write-Output -NoEnumerate $dimensions` looks equivalent and behaves
+    # identically on PowerShell 7, but on Windows PowerShell 5.1 - the Initialization job's actual
+    # shell - ConvertTo-Json then mis-serializes the result as {"value":[...],"Count":N} (a JSON
+    # object, not an array) instead of a plain array, which breaks the Build/BuildLinux jobs'
+    # strategy.matrix.include. See RELEASENOTES.md.
+    return @(, $dimensions)
 }
 
 function CreateBuildDimensions {
@@ -298,7 +302,11 @@ function CreateBuildDimensions {
             # directly rather than guessing at a convention.
             $idRangeSpans = [System.Collections.Generic.List[string]]::new()
             foreach ($testFolderRelPath in $testFolderRelPaths) {
-                $testAppJsonFile = Join-Path $baseFolder $project $testFolderRelPath 'app.json'
+                # Join-Path's -AdditionalChildPath (letting it take more than two path segments at once) is
+                # PowerShell 6+ only - Windows PowerShell 5.1 (the Initialization job's actual shell) throws
+                # "A positional parameter cannot be found that accepts argument" on a 3+-segment call. Nest
+                # instead, which works on both.
+                $testAppJsonFile = Join-Path (Join-Path (Join-Path $baseFolder $project) $testFolderRelPath) 'app.json'
                 if (Test-Path $testAppJsonFile) {
                     try {
                         $testAppJson = Get-Content $testAppJsonFile -Encoding UTF8 | ConvertFrom-Json
@@ -377,7 +385,8 @@ function CreateBuildDimensions {
             if ($sanitizedProject -eq '.') {
                 $sanitizedProject = '_root_'
             }
-            $depFolder = Join-Path $baseFolder "LinuxFastLaneDependencies_staging" $sanitizedProject
+            # Nested, not a single 3-segment call: see the Join-Path comment above, same PS5.1 incompatibility.
+            $depFolder = Join-Path (Join-Path $baseFolder "LinuxFastLaneDependencies_staging") $sanitizedProject
             $downloadedCount = 0
 
             try {
@@ -564,20 +573,13 @@ function Get-ProjectsToBuild {
                     }
                     $windowsBuildDimensions = @($buildDimensions | Where-Object { -not $_.linuxFastLane })
                     $linuxBuildDimensions = @($buildDimensions | Where-Object { $_.linuxFastLane })
-                    # Captured into variables first, not called inline as the hashtable values below: ConvertTo-Json
-                    # on Windows PowerShell 5.1 mis-serializes ProtectEmptyBuildDimensions' -NoEnumerate array output
-                    # as {"value":[...],"Count":N} (a JSON object, not an array) when it's assigned directly as a
-                    # hashtable-literal value instead of via a preceding `$var = ...` statement - which then breaks
-                    # the Build/BuildLinux jobs' strategy.matrix.include (see RELEASENOTES.md).
-                    $protectedWindowsBuildDimensions = ProtectEmptyBuildDimensions -dimensions $windowsBuildDimensions
-                    $protectedLinuxBuildDimensions = ProtectEmptyBuildDimensions -dimensions $linuxBuildDimensions
                     $projectsOrderToBuild += @{
                         projects = $projectsOnDepth
                         projectsCount = $projectsOnDepth.Count
-                        buildDimensions = $protectedWindowsBuildDimensions
+                        buildDimensions = ProtectEmptyBuildDimensions -dimensions $windowsBuildDimensions
                         # GitHub Actions expressions have no length()/array-count function, so the count is precomputed here for the if: conditions gating the Build/BuildLinux jobs
                         buildDimensionsCount = $windowsBuildDimensions.Count
-                        buildDimensionsLinux = $protectedLinuxBuildDimensions
+                        buildDimensionsLinux = ProtectEmptyBuildDimensions -dimensions $linuxBuildDimensions
                         buildDimensionsLinuxCount = $linuxBuildDimensions.Count
                     }
                 }
@@ -586,14 +588,12 @@ function Get-ProjectsToBuild {
 
         if ($projectsOrderToBuild.Count -eq 0) {
             Write-Host "Did not find any projects to add to the build order, adding default values"
-            $protectedEmptyBuildDimensions = ProtectEmptyBuildDimensions -dimensions @()
-            $protectedEmptyLinuxBuildDimensions = ProtectEmptyBuildDimensions -dimensions @()
             $projectsOrderToBuild += @{
                 projects = @()
                 projectsCount = 0
-                buildDimensions = $protectedEmptyBuildDimensions
+                buildDimensions = ProtectEmptyBuildDimensions -dimensions @()
                 buildDimensionsCount = 0
-                buildDimensionsLinux = $protectedEmptyLinuxBuildDimensions
+                buildDimensionsLinux = ProtectEmptyBuildDimensions -dimensions @()
                 buildDimensionsLinuxCount = 0
             }
         }
