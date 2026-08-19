@@ -1477,14 +1477,22 @@ Describe "Get-ProjectsToBuild" {
 
         $savedRunNumber = $env:GITHUB_RUN_NUMBER
         $savedRunAttempt = $env:GITHUB_RUN_ATTEMPT
+        # Also saved/cleared: Set-RunNumberVersioning forces versioningStrategy 15 (ignoring the
+        # explicit 0 above) for pull_request/pull_request_target/merge_group events, so this test
+        # would flip to expecting appBuild = [int32]::MaxValue whenever it happens to run as part
+        # of this repo's own pull_request CI, instead of testing the versioningStrategy 0 path it's
+        # actually named for.
+        $savedEventName = $env:GITHUB_EVENT_NAME
         $env:GITHUB_RUN_NUMBER = '142'
         $env:GITHUB_RUN_ATTEMPT = '3'
+        $env:GITHUB_EVENT_NAME = 'push'
         try {
             $allProjects, $modifiedProjects, $projectsToBuild, $projectDependencies, $buildOrder = Get-ProjectsToBuild -baseFolder $baseFolder
         }
         finally {
             $env:GITHUB_RUN_NUMBER = $savedRunNumber
             $env:GITHUB_RUN_ATTEMPT = $savedRunAttempt
+            $env:GITHUB_EVENT_NAME = $savedEventName
         }
 
         $dimension = $buildOrder[0].buildDimensionsLinux | Where-Object { $_.project -eq 'Project1' }
@@ -1538,14 +1546,19 @@ Describe "Get-ProjectsToBuild" {
 
         $savedRunNumber = $env:GITHUB_RUN_NUMBER
         $savedRunAttempt = $env:GITHUB_RUN_ATTEMPT
+        # Also saved/cleared: see the matching comment in the previous test - Set-RunNumberVersioning
+        # forces versioningStrategy 15 for pull_request/pull_request_target/merge_group events.
+        $savedEventName = $env:GITHUB_EVENT_NAME
         $env:GITHUB_RUN_NUMBER = '142'
         $env:GITHUB_RUN_ATTEMPT = '3'
+        $env:GITHUB_EVENT_NAME = 'push'
         try {
             { $script:buildOrder = (Get-ProjectsToBuild -baseFolder $baseFolder)[4] } | Should -Not -Throw
         }
         finally {
             $env:GITHUB_RUN_NUMBER = $savedRunNumber
             $env:GITHUB_RUN_ATTEMPT = $savedRunAttempt
+            $env:GITHUB_EVENT_NAME = $savedEventName
         }
 
         $dimension = $script:buildOrder[0].buildDimensionsLinux | Where-Object { $_.project -eq 'Project1' }
