@@ -21,7 +21,10 @@ Canonical copy: `.claude/skills/linux-fast-lane-onboarding/SKILL.md` in `StefanM
 
 - **Deployed and live.** `feat/linux-fast-lane` merged into `StefanMaron/AL-Go` `main` (PR #1, merge commit `7f21177b`). `StefanMaron/AL-Go-PTE` and `StefanMaron/AL-Go-AppSource` exist and are populated (as of `7f21177b`) — Actions references in their workflows correctly resolve to `StefanMaron/AL-Go/Actions/<Name>@7f21177b`, and both contain `_BuildALGoProjectLinux.yaml`.
 - Deploy auth is wired on `StefanMaron/AL-Go`: repo variable `APP_ID=1203592` + secret `PRIVATE_KEY`, sourced from the `GitHub App stefanmaronapp` 1Password item (vault `claude`). This lets `Deploy.yaml` push to the two template repos, but the app installation does **not** have "Administration: Read & write" account permission, so it **cannot create new repos** — if a repo needs (re)creating, do it manually first (`gh repo create <owner>/<repo> --public`) then rerun Deploy.
-- **First onboarded repo: `Stefan-Maron-Consulting/Pageworks`** (merged 2026-08-07, PR #33) — an AppSource product repo with a third-party `appDependencyProbingPaths` dependency, so it's a good reference example for a non-trivial onboarding. `linuxFastLane` is scoped there via `.github/Pull Request Build.settings.json`, not `ConditionalSettings`. All other real managed repos checked (ABC fleet) are still on stock `templateUrl: https://github.com/microsoft/AL-Go-PTE@main` as of this writing.
+- **First onboarded repo: `Stefan-Maron-Consulting/Pageworks`** (merged 2026-08-07, PR #33) — an AppSource product repo with a third-party `appDependencyProbingPaths` dependency, so it's a good reference example for a non-trivial onboarding. `linuxFastLane` is scoped there via `.github/Pull Request Build.settings.json`, not `ConditionalSettings`.
+- **Second onboarded repo: `A-BC-Consulting-Group-Inc/RecoverySolutions`** (onboarded 2026-08-20, PR #67 into `main`) — a multi-project PTE repo (`MainApps` eligible for the Linux fast lane, `BridgeApps` compile-only against third-party AppSource dependencies). Good reference example for the compile-only project gap documented below — `BridgeApps` initially still built on the full Windows/artifact pipeline even after retargeting, because `linuxFastLane` correctly does not apply to it. `test` gets its own independent onboarding PR (#66) from the same `workflow_dispatch` — see the multi-branch note below.
+- As of 2026-08-20, `StefanMaron/AL-Go`'s `main` (`4fd75f16`) is 7 commits behind `microsoft/AL-Go`'s `main` (all routine — incremental-build fixes, duplicate-release-artifact fix, action pinning, dependency bumps) and 70 ahead (fork-only work). Not yet synced — the RecoverySolutions onboarding proceeded against the fork's current (unsynced) state rather than blocking on this; do the upstream merge separately per "Keeping the fork mergeable from upstream" below when there's a reason to (e.g. a downstream repo needs one of those 7 fixes).
+- All other real managed repos checked (ABC fleet) are still on stock `templateUrl: https://github.com/microsoft/AL-Go-PTE@main` as of this writing, other than the two above.
 - `StefanMaron/AL-Go-Actions` remains a stale, unrelated fork — confirmed irrelevant to this flow (`Internal/Deploy.ps1` never targets a separate Actions repo for a non-`microsoft` owner).
 
 ## Redeploy after future upstream syncs or fork changes — now automatic (as of PR #2, 2026-08-07)
@@ -64,6 +67,32 @@ The template repos are live — this is directly actionable now. Concrete runboo
    ```
 4. Confirm the project's `application`/`platform` in `app.json` (or `artifact` setting) is pinned to a concrete BC version, not `latest` — needed for predictable fast-lane results, see `Scenarios/LinuxFastLane.md`.
 5. Let the PR's own CI run (`Pull Request Build`/`PullRequestHandler` workflow) — this is the real validation, no separate throwaway PR needed since the onboarding PR itself triggers it. Confirm the new `BuildLinux` job actually appears and passes before merging. If it fails, check whether the failure is fast-lane-specific (e.g. a known Linux-BC test limitation, see `Scenarios/LinuxFastLane.md`) vs. a real regression before troubleshooting further.
+
+### If a repo has both fast-lane-eligible and compile-only projects
+
+`linuxFastLane` is correctly skipped for a project with `useCompilerFolder`/`doNotPublishApps` set (nothing for the fast lane to publish or test) — but that means it silently falls back to the **classic** compiler-folder path, which still downloads the full BC artifact (~2GB) even though it isn't spinning up a container. On a multi-project repo this shows up as "the fast-lane project finished in minutes, the compile-only project is still running" — easy to mistake for a hang. It usually isn't one; it's just the slow path.
+
+The actual fast path for a compile-only project is a **separate** opt-in, not `linuxFastLane`:
+```json
+"workspaceCompilation": { "enabled": true },
+"symbolsSource": "nuGet"
+```
+`symbolsSource: nuGet` resolves only the dependency symbols + AL compiler from NuGet/MSSymbols instead of downloading the BC artifact — this is what actually removes the slow part. Requires `workspaceCompilation.enabled: true`, and per the settings schema is **not supported for apps targeting OnPrem or Internal, or with a `vsixFile` download URL** — check every app's `app.json` `target` field (absent = defaults to Cloud, which is fine) before setting this. Verified on RecoverySolutions' `BridgeApps` (3 Cloud-target apps): Build job went from open-ended/Windows to ~3 minutes.
+
+### Re-triggering "Update AL-Go System Files" after a failed/stuck run
+
+If the workflow genuinely fails (not just "a compile-only project is slow," see above) on the first `workflow_dispatch` against the repo's default branch, the fix is **not** to re-run it against that branch again — re-trigger it a second time with `--ref` pointed at the branch the *first* invocation created (`update-al-go-system-files/<base>/<timestamp>`), and this time pass `directCommit=true`:
+```bash
+gh workflow run "UpdateGitHubGoSystemFiles.yaml" -R <owner>/<repo> \
+  --ref update-al-go-system-files/main/<timestamp> \
+  -f templateUrl="https://github.com/StefanMaron/AL-Go-PTE@main" \
+  -f downloadLatest=true -f directCommit=true
+```
+Getting `directCommit` wrong here is the actual failure mode to watch for: leaving it `false` (the correct value for the *first*, PR-opening invocation) makes this second run open **yet another** new branch/PR instead of fixing the existing one — `directCommit=true` is what makes it commit straight onto the branch you named in `--ref`. Sanity-check after: `git ls-remote --heads <repo> | grep update-al-go-system-files` should show no unexpected extra branch, and the existing PR should have a new commit, not a sibling PR next to it.
+
+### Multi-branch dispatches are independent — never cross-merge
+
+If the repo's `workflowSchedule`/multi-run config includes both `main` and `test` (or any other branch), a single `workflow_dispatch` produces **one PR per branch**, each on its own `update-al-go-system-files/<branch>/<timestamp>` branch. Treat these as fully separate onboardings sharing nothing but the trigger: never merge the `main`-targeted branch into `test` (or vice versa) to "save a step" — a repo's test-branch-contamination guard is liable to reject that merge direction anyway, and even where it wouldn't, it defeats the point of the two independent PRs. If a fix (like the compile-only `workspaceCompilation` setting above) is needed on both, apply it to both branches separately.
 
 ## To revert a repo to stock Microsoft AL-Go
 
