@@ -1,6 +1,6 @@
 ---
 name: linux-fast-lane-onboarding
-description: Onboard, audit, or revert the "Linux fast lane" (bc-linux-based fast PR builds) on any AL-Go-managed repo Stefan manages (ABC customers, WorldMax, personal projects). Also covers keeping the StefanMaron/AL-Go fork in sync with microsoft/AL-Go and deploying it to StefanMaron/AL-Go-PTE and AL-Go-AppSource. Use when Stefan says "onboard the fast lane", "add the Linux fast lane to <repo>", "revert <repo> to Microsoft AL-Go", or "sync/deploy the AL-Go fork".
+description: Onboard, audit, or revert the "Linux fast lane" (bc-linux-based fast PR builds) on any AL-Go-managed repo Stefan manages. Also covers keeping the StefanMaron/AL-Go fork in sync with microsoft/AL-Go and deploying it to StefanMaron/AL-Go-PTE and AL-Go-AppSource. Use when Stefan says "onboard the fast lane", "add the Linux fast lane to <repo>", "revert <repo> to Microsoft AL-Go", or "sync/deploy the AL-Go fork".
 ---
 
 # Linux Fast Lane — Onboarding, Fork Sync, and Revert
@@ -21,9 +21,9 @@ Canonical copy: `.claude/skills/linux-fast-lane-onboarding/SKILL.md` in `StefanM
 
 - **Deployed and live.** `feat/linux-fast-lane` merged into `StefanMaron/AL-Go` `main` (PR #1, merge commit `7f21177b`). `StefanMaron/AL-Go-PTE` and `StefanMaron/AL-Go-AppSource` exist and are populated (as of `7f21177b`) — Actions references in their workflows correctly resolve to `StefanMaron/AL-Go/Actions/<Name>@7f21177b`, and both contain `_BuildALGoProjectLinux.yaml`.
 - Deploy auth is wired on `StefanMaron/AL-Go`: repo variable `APP_ID=1203592` + secret `PRIVATE_KEY`, sourced from the `GitHub App stefanmaronapp` 1Password item (vault `claude`). This lets `Deploy.yaml` push to the two template repos, but the app installation does **not** have "Administration: Read & write" account permission, so it **cannot create new repos** — if a repo needs (re)creating, do it manually first (`gh repo create <owner>/<repo> --public`) then rerun Deploy.
-- **First onboarded repo: `Stefan-Maron-Consulting/Pageworks`** (merged 2026-08-07, PR #33) — an AppSource product repo with a third-party `appDependencyProbingPaths` dependency, so it's a good reference example for a non-trivial onboarding. `linuxFastLane` is scoped there via `.github/Pull Request Build.settings.json`, not `ConditionalSettings`.
-- As of 2026-08-20, `StefanMaron/AL-Go`'s `main` (`4fd75f16`) is 7 commits behind `microsoft/AL-Go`'s `main` (all routine — incremental-build fixes, duplicate-release-artifact fix, action pinning, dependency bumps) and 70 ahead (fork-only work). Not yet synced — an onboarding can proceed against the fork's current (unsynced) state rather than blocking on this; do the upstream merge separately per "Keeping the fork mergeable from upstream" below when there's a reason to (e.g. a downstream repo needs one of those 7 fixes).
-- All other real managed repos checked are still on stock `templateUrl: https://github.com/microsoft/AL-Go-PTE@main` as of this writing, other than Pageworks above.
+- At least one repo has been onboarded successfully, including a non-trivial case (an AppSource-type repo with a third-party `appDependencyProbingPaths` dependency) — a workflow-scoped settings file (`.github/<workflow name>.settings.json`) rather than `ConditionalSettings` is a proven pattern for scoping `linuxFastLane` to one workflow.
+- `StefanMaron/AL-Go`'s `main` can drift behind `microsoft/AL-Go`'s `main` (routine upstream fixes) while carrying its own fork-only commits ahead. That's expected and not a blocker — an onboarding can proceed against the fork's current (unsynced) state; do the upstream merge separately per "Keeping the fork mergeable from upstream" below when there's a reason to (e.g. a downstream repo needs one of the upstream fixes). Check current drift with `git log --oneline main..upstream/main` / `git log --oneline upstream/main..main` before relying on any specific count.
+- Most real managed repos are still on stock `templateUrl: https://github.com/microsoft/AL-Go-PTE@main` — check `.github/AL-Go-Settings.json`'s `templateUrl` in a given repo before assuming it's onboarded.
 - `StefanMaron/AL-Go-Actions` remains a stale, unrelated fork — confirmed irrelevant to this flow (`Internal/Deploy.ps1` never targets a separate Actions repo for a non-`microsoft` owner).
 
 ## Redeploy after future upstream syncs or fork changes — now automatic (as of PR #2, 2026-08-07)
@@ -37,11 +37,11 @@ Manual `workflow_dispatch` is still needed for: a repo that doesn't exist yet (`
 
 Either way, once deployed: check Actions references resolved to `StefanMaron/AL-Go/Actions/<Name>@<sha>` (not `microsoft/...`) and that expected new files are present, e.g.: `gh pr diff <n> -R StefanMaron/AL-Go-PTE | grep -c microsoft/AL-Go-Actions` should show 0 live `uses:` hits (a `$schema` doc example string is a known harmless false positive) — for a `directCommit=true` auto-deploy there's no PR to diff, so instead diff the pushed commit directly: `gh api repos/StefanMaron/AL-Go-PTE/commits/main | jq -r '.files[].filename'`.
 
-**This never reaches downstream repos automatically.** Pageworks (or any other onboarded repo) only picks up the new template content when *it* runs its own "Update AL-Go System Files" — manually, or on whatever `workflowSchedule`/org-level cron it has configured, and even then via a PR it still has to merge (not silent). Bumping something in `Templates/`/`Actions/` on this fork's `main` does NOT mean it's live for consumers yet.
+**This never reaches downstream repos automatically.** An onboarded repo only picks up the new template content when *it* runs its own "Update AL-Go System Files" — manually, or on whatever `workflowSchedule`/org-level cron it has configured, and even then via a PR it still has to merge (not silent). Bumping something in `Templates/`/`Actions/` on this fork's `main` does NOT mean it's live for consumers yet.
 
 ## To onboard an existing managed repo to the fast lane
 
-The template repos are live — this is directly actionable now. Concrete runbook (as executed on the `Stefan-Maron-Consulting/Pageworks` pilot, 2026-08-07):
+The template repos are live — this is directly actionable now. Concrete runbook:
 
 1. Trigger the repo's "Update AL-Go System Files" workflow (`UpdateGitHubGoSystemFiles.yaml`) via `workflow_dispatch`, passing the new `templateUrl` directly as an input rather than hand-editing `AL-Go-Settings.json` — the workflow does both the settings update and the file sync in one PR:
    ```bash
@@ -51,7 +51,7 @@ The template repos are live — this is directly actionable now. Concrete runboo
    ```
    (Use `AL-Go-AppSource@main` for an AppSource-type repo — check `.github/AL-Go-Settings.json`'s `type` field first.) `directCommit=false` opens a review PR instead of pushing straight to the target branch — always use this for a first onboarding.
 2. This PR pulls in `_BuildALGoProjectLinux.yaml` and rewrites all Actions references to `StefanMaron/AL-Go/Actions/<Name>@<sha>` — purely additive, `main`'s existing `Build`/`CICD` path is untouched. Sanity-check: `gh pr diff <n> -R <owner>/<repo> | grep -A3 templateUrl`.
-3. Add the opt-in setting as a second commit on that same PR branch (fetch the auto-generated `update-al-go-system-files/...` branch, add the file, push back onto it — keeps onboarding as one reviewable PR). **Prefer a workflow-scoped settings file over `ConditionalSettings`** when you only need to scope to one workflow — it's simpler and is the pattern already used on Pageworks' `test/linux-fast-lane-build` branch:
+3. Add the opt-in setting as a second commit on that same PR branch (fetch the auto-generated `update-al-go-system-files/...` branch, add the file, push back onto it — keeps onboarding as one reviewable PR). **Prefer a workflow-scoped settings file over `ConditionalSettings`** when you only need to scope to one workflow — it's simpler:
    ```
    .github/Pull Request Build.settings.json   (filename = the target workflow's `name:` field, not its filename)
    ```
