@@ -163,7 +163,7 @@ function Set-RunNumberVersioning {
     - linuxFastLane: Whether this project should build via the Linux BC fast lane instead of the Windows pipeline
     - linuxBcVersion: The concrete BC version to use on the Linux fast lane (best-effort resolved from the artifact/country settings; empty if it couldn't be resolved)
     - linuxAlToolVersion: The AL compiler version policy for the Linux fast lane, mapped from the project's vsixFile setting ('' (default/matching), 'latest', or 'prerelease'); empty if vsixFile is a direct download URL, which can't be mapped to a policy keyword
-    - linuxAppDirs / linuxTestAppDirs: space-separated, repo-root-relative app/test folders for the Linux fast lane
+    - linuxAppDirs / linuxTestAppDirs: newline-separated, repo-root-relative app/test folders for the Linux fast lane (newline, not space, so a folder name that itself contains a space survives - see bc-test-from-source.yml)
     - linuxCodeunitRange: pipe-separated "from..to" span(s) built from the idRanges declared in each test app's app.json, used to scope the Linux fast lane's test-codeunit discovery; empty if no idRanges could be read (the fast lane then falls back to its own unbounded default)
     - linuxDependencySubdir: sanitized project name used as the subfolder under the LinuxFastLaneDependencies artifact holding this project's third-party (appDependencyProbingPaths) and same-repo project dependency .apps; empty if the project has none
     - linuxArtifactNameSuffix: "<sanitized project>-<buildMode>", used as bc-linux's compiled-apps upload suffix ("bc-linux-build-<suffix>") and read back by the PublishLinuxArtifacts job to re-shape that artifact into AL-Go's own Apps/TestApps naming; empty when linuxFastLane is false
@@ -292,9 +292,12 @@ function CreateBuildDimensions {
                     Write-Host "::warning::vsixFile is set to a direct download URL for project $project; the Linux fast lane can't resolve a compiler version from a URL and will fall back to its own default. Use 'default', 'latest', or 'preview' for vsixFile to also control the Linux fast lane compiler."
                 }
             }
-            $linuxAppDirs = @($resolvedSettings.appFolders | ForEach-Object { (Join-Path $project ($_ -replace '^\.[\\/]', '')).Replace('\','/') }) -join ' '
+            # Newline-joined, not space-joined: a folder name can itself contain a space (an
+            # ordinary, user-chosen local folder name, unrelated to the app's id/name/publisher),
+            # and bc-test-from-source.yml's consuming loops split on newline for the same reason.
+            $linuxAppDirs = @($resolvedSettings.appFolders | ForEach-Object { (Join-Path $project ($_ -replace '^\.[\\/]', '')).Replace('\','/') }) -join "`n"
             $testFolderRelPaths = @($resolvedSettings.testFolders | ForEach-Object { $_ -replace '^\.[\\/]', '' })
-            $linuxTestAppDirs = @($testFolderRelPaths | ForEach-Object { (Join-Path $project $_).Replace('\','/') }) -join ' '
+            $linuxTestAppDirs = @($testFolderRelPaths | ForEach-Object { (Join-Path $project $_).Replace('\','/') }) -join "`n"
 
             # Scope the Linux fast lane's test-codeunit discovery to the range(s) each test app
             # actually declares, instead of handing bc-linux an unbounded "run everything"
