@@ -1354,6 +1354,25 @@ Describe "Get-ProjectsToBuild" {
         $dimension.linuxArtifactNameSuffix | Should -BeExactly 'Project1-Default'
     }
 
+    It 'joins linuxAppDirs with newlines, not spaces, so a folder name containing a space survives' {
+        New-Item -Path "$baseFolder/Project1/.AL-Go/settings.json" -Value $(@{ linuxFastLane = $true; appFolders = @('My App', 'app2') } | ConvertTo-Json) -type File -Force
+        New-Item -Path "$baseFolder/Project1/My App/app.json" -type File -Force
+        Set-Content -Path "$baseFolder/Project1/My App/app.json" -Value (@{ id = [Guid]::NewGuid().ToString(); name = 'App'; publisher = 'Test'; version = '1.0.0.0'; dependencies = @() } | ConvertTo-Json)
+        New-Item -Path "$baseFolder/Project1/app2/app.json" -type File -Force
+        Set-Content -Path "$baseFolder/Project1/app2/app.json" -Value (@{ id = [Guid]::NewGuid().ToString(); name = 'App2'; publisher = 'Test'; version = '1.0.0.0'; dependencies = @() } | ConvertTo-Json)
+
+        $alGoSettings = @{ fullBuildPatterns = @(); projects = @(); powerPlatformSolutionFolder = ''; useProjectDependencies = $false }
+        $env:Settings = ConvertTo-Json $alGoSettings -Depth 99 -Compress
+
+        $allProjects, $modifiedProjects, $projectsToBuild, $projectDependencies, $buildOrder = Get-ProjectsToBuild -baseFolder $baseFolder
+
+        $dimension = $buildOrder[0].buildDimensionsLinux | Where-Object { $_.project -eq 'Project1' }
+        $dirs = @($dimension.linuxAppDirs -split "`n")
+        $dirs.Count | Should -BeExactly 2
+        $dirs | Should -Contain 'Project1/My App'
+        $dirs | Should -Contain 'Project1/app2'
+    }
+
     It 'leaves linuxArtifactNameSuffix empty for a non-linuxFastLane project' {
         New-Item -Path "$baseFolder/Project1/.AL-Go/settings.json" -Value $(@{ } | ConvertTo-Json) -type File -Force
         New-Item -Path "$baseFolder/Project1/app/app.json" -type File -Force
