@@ -80,6 +80,26 @@ The actual fast path for a compile-only project is a **separate** opt-in, not `l
 
 **This can't be defaulted org-wide the way `linuxFastLane` often is.** An org-level `ALGoOrgSettings` GitHub Actions variable (optionally scoped with `ConditionalSettings` to specific branches/workflows) is a reasonable way to default `linuxFastLane` across every repo in an org, since it's a no-op wherever a project isn't fast-lane-eligible. `workspaceCompilation`/`symbolsSource: nuGet` can't be defaulted the same way — set it in the specific compile-only project's `<project>/.AL-Go/settings.json` inside its repo. Compile-only-ness is a per-project property (a multi-project repo will often have some projects that are fast-lane-eligible and others that are compile-only), so this one has to be scoped per project, not per org or per repo.
 
+### Switching `templateUrl` to a new fork commit requires running "Update AL-Go System Files" TWICE
+
+Confirmed 2026-08-27 (Stefan). The **first** run's own execution is dispatched using whatever Actions refs (`microsoft/AL-Go-Actions@vX.Y` or a previously-pinned `StefanMaron/AL-Go/Actions/<Name>@<old-sha>`) were already committed in the repo *before* that run started — GitHub resolves a workflow's `uses:` refs at job-start time, before the run's own commit lands. So the first run correctly rewrites the workflow YAML text and settings to point at the new templateUrl/sha, but any settings-generation or project/build-matrix-determination logic that ran *during that same first run* still executed the **old** (pre-switch) version of that logic. A second `workflow_dispatch` — now starting from a ref where the new Actions refs are already committed — is what actually exercises the new logic end-to-end.
+
+Symptom when this bites: the PR/branch's very next CI build (the one that's supposed to validate the onboarding) fails with something like `Cannot bind argument to parameter 'project' because it is an empty string.` in a spuriously-named `Build () / ()` job — this is stale project/build-dimension-determination logic from before the switch, not a real problem with the target repo's projects. Don't debug the target repo's settings for this; just run the onboarding dispatch a second time against the same branch:
+```bash
+gh workflow run "UpdateGitHubGoSystemFiles.yaml" -R <owner>/<repo> \
+  --ref <the-branch-that-already-has-the-new-templateUrl> \
+  -f templateUrl="https://github.com/StefanMaron/AL-Go-PTE@main" \
+  -f downloadLatest=true -f directCommit=true \
+  -f includeBranches=<that-same-branch>
+```
+This is a distinct scenario from "Re-triggering after a failed/stuck run" below — that section is about a run that itself failed; this one is about a run that *succeeded* but whose very next build is broken because of what it left behind. Not yet confirmed whether the second pass actually resolves the empty-project crash on its own, or whether it's masked by/entangled with a separate build-matrix bug for repos mixing fast-lane-eligible and ineligible projects (see below) — re-verify next time this comes up and update this note with the outcome.
+
+### Fast-lane publish step mangles app folder names containing spaces
+
+Found 2026-08-27 onboarding `A-BC-Consulting-Group-Inc/LM-Energy-Partners`. The fast-lane container's publish step (`bc-linux/scripts/...`, inside the `ghcr.io/stefanmaron/msdyn365bc.on.linux/bc-runner` image — this lives in the separate `StefanMaron/MsDyn365Bc.On.Linux` repo, not in this AL-Go fork) builds its app filename from `$APP_DIRS`/`$TEST_APP_DIRS`, which are **space-joined lists of app folder paths**. The loop that walks them (`for d in $APP_DIRS $TEST_APP_DIRS; do ... done`) is unquoted, so plain bash word-splitting breaks any folder name that itself contains a space into multiple `$d` values. A project at `MainApps/Longhorn Midstream BC Extension` produced `missing: build/Longhorn.app` — `$d` was word-split down to just `MainApps/Longhorn`, and `basename` on that gives `Longhorn`.
+
+This is a real bug in the bc-linux side of the fast lane (quote `$d`, or pass the list as a properly delimited/array-safe structure instead of space-joined) — not something wrong with the target repo. Until it's fixed there: an app folder name is local to the consuming repo (freely chosen, unrelated to the app's actual `id`/`name`/`publisher` in `app.json`), so renaming the folder to remove the space is a safe, low-risk workaround for a specific repo, but doesn't fix it for anyone else onboarding a repo with the same pattern. Prefer fixing bc-linux's script if you have access; only rename a target repo's folder as a stopgap.
+
 ### Re-triggering "Update AL-Go System Files" after a failed/stuck run
 
 If the workflow genuinely fails (not just "a compile-only project is slow," see above) on the first `workflow_dispatch` against the repo's default branch, the fix is **not** to re-run it against that branch again — re-trigger it a second time with `--ref` pointed at the branch the *first* invocation created (`update-al-go-system-files/<base>/<timestamp>`), and this time pass `directCommit=true`:
