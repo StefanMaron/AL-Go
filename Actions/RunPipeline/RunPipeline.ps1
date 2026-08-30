@@ -223,7 +223,11 @@ try {
             # ConvertFrom-Json returns a plain string, not a one-element array, when the JSON array has
             # exactly one entry. Run-AlPipeline then sees a string and re-splits it on commas, which
             # breaks a file path whose publisher name itself contains a comma.
-            $install.Apps = @(Get-Content -Path $installAppsJson -Raw | ConvertFrom-Json)
+            # On Windows PowerShell 5.1 ConvertFrom-Json emits a JSON array as one object, so a bare
+            # @(...) wrap turns an empty list into @(@()) - count 1, stringifies to '' - which
+            # Run-AlPipeline later feeds to CopyAppFilesToFolder as an empty Path. Piping through
+            # Where-Object enumerates the array on both editions and drops the empty entries.
+            $install.Apps = @((Get-Content -Path $installAppsJson -Raw | ConvertFrom-Json) | Where-Object { $_ })
         }
         catch {
             throw "Failed to parse JSON file at path '$installAppsJson'. Error: $($_.Exception.Message)"
@@ -232,7 +236,7 @@ try {
 
     if ($installTestAppsJson -and (Test-Path $installTestAppsJson)) {
         try {
-            $install.TestApps = @(Get-Content -Path $installTestAppsJson -Raw | ConvertFrom-Json)
+            $install.TestApps = @((Get-Content -Path $installTestAppsJson -Raw | ConvertFrom-Json) | Where-Object { $_ })
         }
         catch {
             throw "Failed to parse JSON file at path '$installTestAppsJson'. Error: $($_.Exception.Message)"
